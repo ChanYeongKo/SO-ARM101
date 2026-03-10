@@ -20,42 +20,50 @@ flowchart TD
 
     subgraph PERCEPTION["인식 레이어"]
         YO["YOLOv8\n쓰레기 감지"]
-        PO["3D 위치 추정\n(Point Cloud)"]
+        PO["3D 좌표 변환\n(Camera Intrinsics)"]
+        PC["Point Cloud 분석\n물체 크기 측정"]
+        TF["좌표계 변환 (TF)\n카메라 → 로봇 베이스"]
     end
 
     subgraph DECISION["판단 레이어"]
         GD["Garbage Detector Node\n(ROS2)"]
         NAV["Navigation2\n경로 계획"]
-        AC["Arm Controller Node\n(ROS2)"]
+        IK["역기구학 (IK)\n목표 위치 → 관절 각도"]
+        GR["그리퍼 개도 계산\n물체 폭 × 1.2"]
     end
 
     subgraph ROBOT["실행 레이어"]
         TB["TurtleBot3 Waffle\n자율주행"]
-        ARM["SO-ARM101\n로봇팔 (Follower)"]
-        LR["LeRobot\n모방학습 모델 (ACT)"]
+        MP["MoveIt2\n모션 플래닝"]
+        ARM["SO-ARM101\n로봇팔"]
+        ACT["LeRobot ACT\n복잡한 파지 보조"]
     end
 
     subgraph OUTPUT["결과"]
         BIN["쓰레기통\n(지정 위치)"]
     end
 
-    DC -->|"RGB + Depth"| YO
-    YO -->|"BBox + Class"| PO
-    PO -->|"/detected_objects\n3D 좌표"| GD
+    DC -->|"RGB"| YO
+    DC -->|"Depth 맵"| PO
+    DC -->|"Point Cloud"| PC
+    YO -->|"BBox (u,v,w,h)"| PO
+    PO -->|"X,Y,Z (카메라 좌표계)"| TF
+    PC -->|"물체 폭(mm)"| GR
+    TF -->|"X,Y,Z (로봇 좌표계)"| GD
 
-    GD -->|"/goal_pose\n이동 목표"| NAV
-    GD -->|"/target_pose\n집기 목표"| AC
+    GD -->|"이동 목표"| NAV
+    GD -->|"집기 목표 위치"| IK
+    GR -->|"그리퍼 각도"| MP
 
     NAV -->|"cmd_vel"| TB
-    TB -->|"쓰레기 앞 도착"| AC
-
-    AC --> LR
-    LR -->|"관절 제어"| ARM
-    ARM -->|"쓰레기 집기 완료"| NAV
+    TB -->|"도착"| IK
+    IK -->|"관절 각도 θ1~θ6"| MP
+    MP -->|"궤적 명령"| ARM
+    ACT -.->|"복잡한 형태 보조"| ARM
+    ARM -->|"집기 완료"| NAV
     NAV -->|"쓰레기통으로 이동"| TB
-    TB -->|"쓰레기통 앞 도착"| AC
-    AC --> LR
-    ARM -->|"쓰레기 투입"| BIN
+    TB -->|"도착"| MP
+    ARM -->|"투입"| BIN
 ```
 
 ---
@@ -67,16 +75,20 @@ flowchart TD
     subgraph CAM["뎁스카메라 (RGB-D)"]
         RGB["RGB 영상"]
         DEPTH["Depth 맵"]
+        PCAM["Point Cloud"]
     end
 
-    subgraph PC["Host PC (Ubuntu 24.04 / ROS2 Jazzy)"]
-        YO["YOLOv8\n쓰레기 감지"]
-        POS["3D 좌표 계산\n위치값 X, Y + 깊이값 Z"]
-        AC["Arm Controller Node\n(ROS2)"]
-        LR["LeRobot ACT 모델\n관절 각도 추론"]
+    subgraph SW["Host PC (Ubuntu 24.04 / ROS2 Jazzy)"]
+        YO["YOLOv8\n쓰레기 감지\nBBox(u,v,w,h)"]
+        COORD["3D 좌표 변환\nCamera Intrinsics\nX,Y,Z (카메라 좌표계)"]
+        TF["좌표계 변환 TF\nX,Y,Z (로봇 베이스 좌표계)"]
+        SIZE["Point Cloud 분석\n물체 폭 측정 (mm)"]
+        GR["그리퍼 개도 계산\n개도 = 물체 폭 × 1.2"]
+        IK["역기구학 IK\n목표 위치 → 관절 각도\nθ1 ~ θ6"]
+        MP["MoveIt2\n모션 플래닝\n충돌 없는 궤적 생성"]
     end
 
-    subgraph HW["로봇팔 제어 하드웨어"]
+    subgraph HW["로봇팔 하드웨어"]
         BOARD["SO-ARM101\n서보 제어 보드 (USB)"]
         ARM["SO-ARM101\n로봇팔 (Follower)"]
     end
@@ -86,11 +98,15 @@ flowchart TD
     end
 
     RGB -->|"영상 스트림"| YO
-    DEPTH -->|"픽셀별 거리"| POS
-    YO -->|"쓰레기 BBox"| POS
-    POS -->|"3D 좌표 (X, Y, Z)"| AC
-    AC -->|"모델 추론 요청"| LR
-    LR -->|"관절 각도 명령"| BOARD
+    DEPTH -->|"픽셀별 깊이값"| COORD
+    PCAM -->|"3D 포인트"| SIZE
+    YO -->|"쓰레기 중심 픽셀"| COORD
+    COORD -->|"X,Y,Z (카메라 기준)"| TF
+    SIZE -->|"물체 폭"| GR
+    TF -->|"X,Y,Z (로봇 기준)"| IK
+    IK -->|"관절 각도 θ1~θ6"| MP
+    GR -->|"그리퍼 각도"| MP
+    MP -->|"궤적 명령"| BOARD
     BOARD -->|"서보 모터 제어"| ARM
     ARM --> GRAB
 ```
@@ -104,48 +120,59 @@ sequenceDiagram
     participant CAM as 뎁스카메라
     participant AI as YOLOv8
     participant GD as Garbage Detector
+    participant IK as IK + MoveIt2
     participant NAV as Navigation2
     participant CAR as TurtleBot3
     participant ARM as SO-ARM101
 
     CAM->>AI: RGB-D 이미지 스트림
-    AI->>GD: 쓰레기 감지 + 3D 위치
+    AI->>GD: 쓰레기 BBox + 클래스
+    GD->>GD: 3D 좌표 변환 (Intrinsics + TF)
+    GD->>GD: Point Cloud로 물체 폭 측정
     GD->>NAV: 쓰레기 위치로 이동 명령
     NAV->>CAR: 경로 생성 및 이동
     CAR->>GD: 도착 완료
-    GD->>ARM: 집기 동작 실행 (LeRobot ACT)
+    GD->>IK: 목표 위치 (X,Y,Z) 전달
+    IK->>IK: 관절 각도 계산 (θ1~θ6)
+    IK->>IK: 그리퍼 개도 계산
+    IK->>ARM: 궤적 명령 전송 (MoveIt2)
     ARM->>GD: 집기 완료
     GD->>NAV: 쓰레기통 위치로 이동 명령
     NAV->>CAR: 경로 생성 및 이동
     CAR->>GD: 도착 완료
-    GD->>ARM: 투입 동작 실행 (LeRobot ACT)
+    GD->>IK: 투입 위치 (X,Y,Z) 전달
+    IK->>ARM: 궤적 명령 전송
+    ARM->>GD: 투입 완료
 ```
 
 ---
 
 ## 기술 스택
 
-| 구분 | 기술 |
-|------|------|
-| OS | Ubuntu 24.04 |
-| 로봇 미들웨어 | ROS2 Jazzy |
-| 자율주행 | TurtleBot3 Waffle + Navigation2 |
-| 로봇팔 | SO-ARM101 (Leader/Follower) |
-| 학습 프레임워크 | LeRobot (Hugging Face) - ACT |
-| 물체 인식 | YOLOv8 + RGB-D 카메라 |
-| 언어 | Python, C++ |
+| 구분 | 기술 | 역할 |
+|------|------|------|
+| OS | Ubuntu 24.04 | 개발 환경 |
+| 로봇 미들웨어 | ROS2 Jazzy | 노드 간 통신, TF 관리 |
+| 자율주행 | TurtleBot3 Waffle + Navigation2 | 자율 이동 및 경로 계획 |
+| 로봇팔 | SO-ARM101 (Follower) | 쓰레기 집기 실행 |
+| 물체 인식 | YOLOv8 | 쓰레기 감지 및 BBox 추출 |
+| 3D 인식 | RGB-D 카메라 + Point Cloud | 쓰레기 3D 위치 및 크기 측정 |
+| 팔 제어 | MoveIt2 + 역기구학 (IK) | 위치 독립적 팔 모션 플래닝 |
+| 보조 학습 | LeRobot ACT | 복잡한 형태 파지 보조 |
+| 언어 | Python, C++ | - |
 
 ---
 
 ## 개발 로드맵
 
 ### 1학기 - 로봇팔 위주
-- [ ] 개발 환경 구축 (ROS2 Jazzy + LeRobot)
+- [ ] 개발 환경 구축 (ROS2 Jazzy + LeRobot + MoveIt2)
 - [ ] SO-ARM101 캘리브레이션 및 기초 제어
-- [ ] ROS2 노드로 팔 제어 래핑
-- [ ] 뎁스카메라 연동 및 3D 위치 추정
-- [ ] 쓰레기 집기 데이터 수집 (텔레오퍼레이션)
-- [ ] ACT 모델 학습 및 검증
+- [ ] 뎁스카메라 캘리브레이션 및 TF 설정 (카메라 ↔ 로봇 좌표계)
+- [ ] YOLOv8 쓰레기 감지 + 3D 좌표 변환 (Camera Intrinsics)
+- [ ] Point Cloud로 물체 크기 측정 → 그리퍼 개도 계산
+- [ ] 역기구학 (IK) 구현 및 MoveIt2 연동
+- [ ] 통합 테스트 (감지 → IK → 집기 자율 동작)
 
 ### 2학기 - 전체 통합
 - [ ] TurtleBot3 자율주행 연동
@@ -163,13 +190,13 @@ gantt
     axisFormat %m월 %d일
 
     section 1학기 (로봇팔)
-    개발 환경 구축                        :a1, 2025-03-03, 2w
-    SO-ARM101 캘리브레이션 및 기초 제어   :a2, after a1, 2w
-    ROS2 노드로 팔 제어 래핑              :a3, after a2, 2w
-    뎁스카메라 연동 및 3D 위치 추정       :a4, after a3, 2w
-    쓰레기 집기 데이터 수집               :a5, after a4, 2w
-    ACT 모델 학습 및 검증                 :a6, after a5, 3w
-    1학기 통합 테스트 및 발표 준비        :milestone, a7, after a6, 1w
+    개발 환경 구축                              :a1, 2025-03-03, 2w
+    SO-ARM101 캘리브레이션 및 기초 제어         :a2, after a1, 2w
+    뎁스카메라 캘리브레이션 및 TF 설정          :a3, after a2, 2w
+    YOLOv8 감지 + 3D 좌표 변환                 :a4, after a3, 2w
+    Point Cloud 물체 크기 측정 + 그리퍼 개도   :a5, after a4, 1w
+    역기구학 IK 구현 및 MoveIt2 연동            :a6, after a5, 2w
+    통합 테스트 및 발표 준비                    :milestone, a7, after a6, 1w
 
     section 2학기 (전체 통합)
     TurtleBot3 자율주행 세팅              :b1, 2025-09-01, 2w
@@ -184,13 +211,14 @@ gantt
 
 | 주차 | 기간 | 내용 | 목표 산출물 |
 |------|------|------|------------|
-| 1 ~ 2주 | 3월 1주 ~ 2주 | 개발 환경 구축 | Ubuntu 24.04 + ROS2 Jazzy + LeRobot 설치 완료 |
+| 1 ~ 2주 | 3월 1주 ~ 2주 | 개발 환경 구축 | Ubuntu 24.04 + ROS2 Jazzy + MoveIt2 + LeRobot 설치 완료 |
 | 3 ~ 4주 | 3월 3주 ~ 4주 | SO-ARM101 기초 제어 | 캘리브레이션 완료, 텔레오퍼레이션 동작 확인 |
-| 5 ~ 6주 | 4월 1주 ~ 2주 | ROS2 팔 제어 래핑 | ROS2 토픽으로 팔 제어 노드 완성 |
-| 7 ~ 8주 | 4월 3주 ~ 4주 | 뎁스카메라 연동 | 쓰레기 3D 좌표 (X, Y, Z) 추출 |
-| 9 ~ 10주 | 5월 1주 ~ 2주 | 데이터 수집 | 집기 동작 데이터셋 50회 이상 수집 |
-| 11 ~ 13주 | 5월 3주 ~ 6월 1주 | ACT 모델 학습 | 학습 완료 + 자율 집기 동작 검증 |
-| 14 ~ 15주 | 6월 2주 ~ 3주 | 통합 테스트 | 쓰레기 인식 → 자율 집기 성공률 측정 |
+| 5 ~ 6주 | 4월 1주 ~ 2주 | 뎁스카메라 캘리브레이션 + TF 설정 | 카메라 ↔ 로봇 좌표계 변환 행렬 확보 |
+| 7 ~ 8주 | 4월 3주 ~ 4주 | YOLOv8 감지 + 3D 좌표 변환 | 쓰레기 3D 위치 (X, Y, Z) 추출 |
+| 9주 | 5월 1주 | Point Cloud 물체 크기 측정 | 물체 폭 측정 → 그리퍼 개도 자동 계산 |
+| 10 ~ 11주 | 5월 2주 ~ 3주 | 역기구학 (IK) + MoveIt2 연동 | 목표 위치 → 관절 각도 계산 및 궤적 실행 |
+| 12 ~ 13주 | 5월 4주 ~ 6월 1주 | 통합 테스트 | 감지 → IK → 집기 자율 동작 성공률 측정 |
+| 14 ~ 15주 | 6월 2주 ~ 3주 | 성능 개선 | 파지 성공률 향상, 예외 케이스 처리 |
 | 16주 | 6월 4주 | 1학기 발표 | 시연 영상 + 발표 자료 |
 
 ### 2학기 상세 일정
