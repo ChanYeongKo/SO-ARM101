@@ -141,7 +141,7 @@ sequenceDiagram
     participant WC as 리스트 카메라 (D405)
     participant AI as YOLOv8
     participant GD as Garbage Detector
-    participant IK as IK + MoveIt2
+    participant IK as IKPy
     participant NAV as Navigation2
     participant CAR as TurtleBot3
     participant ARM as SO-ARM101
@@ -158,7 +158,7 @@ sequenceDiagram
     GD->>IK: 정밀 목표 위치 (X,Y,Z) 전달
     IK->>IK: 관절 각도 계산 (θ1~θ6)
     IK->>IK: 그리퍼 개도 계산
-    IK->>ARM: 궤적 명령 전송 (MoveIt2)
+    IK->>ARM: 관절 각도 명령 전송
     ARM->>GD: 집기 완료
 
     GD->>NAV: 쓰레기통 위치로 이동 명령
@@ -182,7 +182,7 @@ sequenceDiagram
 | 탑 카메라 | RGB USB 카메라 (차량 상단) | 넓은 시야로 쓰레기 탐지 |
 | 리스트 카메라 | Intel RealSense D405 (그리퍼 손목) | 근거리 정밀 3D 측정 |
 | 물체 인식 | YOLOv8 | 쓰레기 감지 및 BBox 추출 |
-| 팔 제어 | MoveIt2 + 역기구학 (IK) | 위치 독립적 팔 모션 플래닝 |
+| 팔 제어 | IKPy (역기구학) | 위치 독립적 팔 모션 플래닝 |
 | 보조 학습 | LeRobot ACT | 복잡한 형태 파지 보조 |
 | 언어 | Python, C++ | - |
 
@@ -191,12 +191,12 @@ sequenceDiagram
 ## 개발 로드맵
 
 ### 1학기 - 로봇팔 위주
-- [ ] 개발 환경 구축 (ROS2 Jazzy + MoveIt2 + LeRobot)
+- [ ] 개발 환경 구축 (ROS2 Jazzy + IKPy + LeRobot)
 - [ ] SO-ARM101 캘리브레이션 및 기초 제어
 - [ ] 탑 카메라 + YOLOv8 쓰레기 감지
 - [ ] D405 (리스트 카메라) 캘리브레이션 및 TF 설정
 - [ ] Point Cloud로 물체 크기 측정 → 그리퍼 개도 계산
-- [ ] 역기구학 (IK) 구현 및 MoveIt2 연동
+- [ ] 역기구학 IKPy 구현 및 연동
 - [ ] 통합 테스트 (감지 → IK → 집기 자율 동작)
 
 ### 2학기 - 전체 통합
@@ -221,7 +221,7 @@ gantt
     탑 카메라 + YOLOv8 쓰레기 감지             :a3, after a2, 2w
     D405 캘리브레이션 및 TF 설정               :a4, after a3, 1w
     Point Cloud 물체 크기 측정 + 그리퍼 개도   :a5, after a4, 1w
-    역기구학 IK 구현 및 MoveIt2 연동            :a6, after a5, 2w
+    역기구학 IKPy 구현 및 연동            :a6, after a5, 2w
     통합 테스트 및 성능 개선                    :a7, after a6, 2w
     1학기 발표 준비                             :milestone, a8, after a7, 1w
 
@@ -238,12 +238,12 @@ gantt
 
 | 주차 | 기간 | 내용 | 목표 산출물 |
 |------|------|------|------------|
-| 1 ~ 2주 | 3월 1주 ~ 2주 | 개발 환경 구축 | Ubuntu 24.04 + ROS2 Jazzy + MoveIt2 + LeRobot 설치 완료 |
+| 1 ~ 2주 | 3월 1주 ~ 2주 | 개발 환경 구축 | Ubuntu 24.04 + ROS2 Jazzy + IKPy + LeRobot 설치 완료 |
 | 3 ~ 4주 | 3월 3주 ~ 4주 | SO-ARM101 기초 제어 | 캘리브레이션 완료, 텔레오퍼레이션 동작 확인 |
 | 5 ~ 6주 | 4월 1주 ~ 2주 | 탑 카메라 + YOLOv8 | 쓰레기 감지 및 2D BBox 추출 |
 | 7주 | 4월 3주 | D405 캘리브레이션 + TF 설정 | 리스트 카메라 ↔ 로봇 좌표계 변환 행렬 확보 |
 | 8주 | 4월 4주 | Point Cloud 물체 크기 측정 | 물체 폭 측정 → 그리퍼 개도 자동 계산 |
-| 9 ~ 10주 | 5월 1주 ~ 2주 | 역기구학 (IK) + MoveIt2 연동 | 목표 위치 → 관절 각도 계산 및 궤적 실행 |
+| 9 ~ 10주 | 5월 1주 ~ 2주 | 역기구학 IKPy 연동 | 목표 위치 → 관절 각도 계산 및 궤적 실행 |
 | 11 ~ 13주 | 5월 3주 ~ 6월 1주 | 통합 테스트 | 감지 → IK → 집기 자율 동작 성공률 측정 |
 | 14 ~ 15주 | 6월 2주 ~ 3주 | 성능 개선 | 파지 성공률 향상, 예외 케이스 처리 |
 | 16주 | 6월 4주 | 1학기 발표 | 시연 영상 + 발표 자료 |
@@ -327,10 +327,10 @@ source ~/.bashrc
 
 ---
 
-### 2. MoveIt2 설치
+### 2. IKPy 설치
 
 ```bash
-sudo apt install -y ros-jazzy-moveit
+pip install ikpy
 ```
 
 ---
