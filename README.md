@@ -36,9 +36,9 @@ flowchart TD
     end
 
     subgraph PERCEPTION["인식 레이어"]
-        YO["YOLOv8\n쓰레기 감지 (탑 카메라)"]
-        COORD["3D 좌표 변환\nCamera Intrinsics"]
-        PC["Point Cloud 분석\n물체 크기 측정 (리스트 카메라)"]
+        YO["YOLOv8<br\>쓰레기 감지 (탑 카메라)"]
+        COORD["3D 좌표 변환<br\>Camera Intrinsics"]
+        PC["Point Cloud 분석<br\>물체 크기 측정 (리스트 카메라)"]
         TF["좌표계 변환 TF\n카메라 → 로봇 베이스"]
     end
 
