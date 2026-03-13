@@ -27,11 +27,12 @@ matplotlib.rcParams["axes.unicode_minus"] = False
 # ──────────────────────────────────────────────────────────
 # 1. SO-ARM101 로봇 모델 정의 (실제 치수 근사값, 단위: m)
 # ──────────────────────────────────────────────────────────
-L_BASE  = 0.100   # 베이스 높이
+L_BASE  = 0.350   # TurtleBot3 Waffle 위 장착 높이 (차체 + 브라켓 포함 약 35cm)
 L_UPPER = 0.130   # 상완 (어깨 → 팔꿈치)
 L_LOWER = 0.120   # 하완 (팔꿈치 → 손목)
 L_WRIST = 0.080   # 손목 → 그리퍼
-REACH   = L_BASE + L_UPPER + L_LOWER + L_WRIST   # 최대 도달 거리
+ARM_REACH = L_UPPER + L_LOWER + L_WRIST   # 팔 도달 거리 (베이스 제외)
+REACH     = L_BASE + ARM_REACH            # 최대 도달 거리 (시각화용)
 
 arm = ikpy.chain.Chain(
     name="so_arm101",
@@ -45,21 +46,22 @@ arm = ikpy.chain.Chain(
             rotation=[0, 0, 1],
             bounds=(-np.pi, np.pi),
         ),
-        # 관절 2: 어깨 (Y축) - 아래 30도 ~ 위 150도 (바닥 관통 방지)
+        # 관절 2: 어깨 (Y축) - 아래 90도 ~ 위 150도
+        # 베이스가 35cm이므로 바닥 물체를 잡으려면 충분히 아래로 내려가야 함
         ikpy.link.URDFLink(
             name="shoulder",
             origin_translation=[0, 0, 0],
             origin_orientation=[0, 0, 0],
             rotation=[0, 1, 0],
-            bounds=(-np.pi / 6, np.pi * 5 / 6),
+            bounds=(-np.pi / 2, np.pi * 5 / 6),
         ),
-        # 관절 3: 팔꿈치 (Y축) - 접힘 방지
+        # 관절 3: 팔꿈치 (Y축)
         ikpy.link.URDFLink(
             name="elbow",
             origin_translation=[L_UPPER, 0, 0],
             origin_orientation=[0, 0, 0],
             rotation=[0, 1, 0],
-            bounds=(-np.pi * 2 / 3, np.pi * 2 / 3),
+            bounds=(-np.pi * 5 / 6, np.pi * 5 / 6),
         ),
         # 관절 4: 손목 (Y축)
         ikpy.link.URDFLink(
@@ -67,7 +69,7 @@ arm = ikpy.chain.Chain(
             origin_translation=[L_LOWER, 0, 0],
             origin_orientation=[0, 0, 0],
             rotation=[0, 1, 0],
-            bounds=(-np.pi / 2, np.pi / 2),
+            bounds=(-np.pi * 2 / 3, np.pi * 2 / 3),
         ),
         # 엔드이펙터 (고정)
         ikpy.link.URDFLink(
@@ -79,8 +81,10 @@ arm = ikpy.chain.Chain(
     ],
 )
 
-# 홈 자세: 팔을 위로 세운 초기 상태 (IK 시작점으로 사용)
-HOME_ANGLES = np.array([0, 0, np.pi / 4, -np.pi / 4, np.pi / 4, 0, 0])
+# 홈 자세: 팔을 위로 세운 초기 상태
+HOME_ANGLES      = np.array([0, 0,  np.pi / 4, -np.pi / 4, np.pi / 4, 0, 0])
+# 바닥 집기용 초기 자세: 어깨를 앞으로 내리고 팔꿈치 굽힘
+FLOOR_ANGLES     = np.array([0, 0, -np.pi / 4,  np.pi / 2, np.pi / 3, 0, 0])
 
 
 # ──────────────────────────────────────────────────────────
@@ -93,12 +97,19 @@ def get_positions(joint_angles: np.ndarray) -> np.ndarray:
 
 
 def compute_ik(target_xyz: list, current_angles: np.ndarray) -> np.ndarray:
-    """목표 위치 → 관절 각도 (IK 계산)"""
-    return arm.inverse_kinematics(
-        target_position=target_xyz,
-        initial_position=current_angles,
-        max_iter=1000,
-    )
+    """목표 위치 → 관절 각도 (여러 초기 자세로 시도 후 최소 오차 반환)"""
+    best_angles, best_err = None, float("inf")
+    for init in [HOME_ANGLES, FLOOR_ANGLES, current_angles]:
+        angles = arm.inverse_kinematics(
+            target_position=target_xyz,
+            initial_position=init,
+            max_iter=1000,
+        )
+        actual = arm.forward_kinematics(angles)[:3, 3]
+        err = np.linalg.norm(np.array(target_xyz) - actual)
+        if err < best_err:
+            best_err, best_angles = err, angles
+    return best_angles
 
 
 def interpolate(start: np.ndarray, end: np.ndarray, n: int = 40) -> list:
@@ -133,7 +144,7 @@ ax_btn = fig.add_axes([0.82, 0.23, 0.12, 0.06])
 
 tb_x  = TextBox(ax_x,  "X (m): ", initial="0.20")
 tb_y  = TextBox(ax_y,  "Y (m): ", initial="0.00")
-tb_z  = TextBox(ax_z,  "Z (m): ", initial="0.15")
+tb_z  = TextBox(ax_z,  "Z (m): ", initial="0.03")
 btn   = Button(ax_btn, "이동 실행", color="royalblue", hovercolor="steelblue")
 btn.label.set_color("white")
 btn.label.set_fontsize(11)
@@ -148,9 +159,9 @@ JOINT_COLORS = ["#4C72B0", "#DD8452", "#55A868", "#C44E52"]
 
 def draw_3d(current_angles, target_angles, target_xyz, anim_angles=None):
     ax3d.clear()
-    ax3d.set_xlim(-REACH, REACH)
-    ax3d.set_ylim(-REACH, REACH)
-    ax3d.set_zlim(0, REACH * 1.2)
+    ax3d.set_xlim(-ARM_REACH, ARM_REACH)
+    ax3d.set_ylim(-ARM_REACH, ARM_REACH)
+    ax3d.set_zlim(0, REACH * 1.1)
     ax3d.set_xlabel("X (m)")
     ax3d.set_ylabel("Y (m)")
     ax3d.set_zlabel("Z (m)")
@@ -160,10 +171,10 @@ def draw_3d(current_angles, target_angles, target_xyz, anim_angles=None):
     xx, yy = np.meshgrid([-REACH, REACH], [-REACH, REACH])
     ax3d.plot_surface(xx, yy, np.zeros_like(xx), alpha=0.08, color="gray")
 
-    # 도달 범위 원 (바닥)
+    # 도달 범위 원 (바닥) - 팔 길이 기준
     theta = np.linspace(0, 2 * np.pi, 100)
     ax3d.plot(
-        REACH * np.cos(theta), REACH * np.sin(theta),
+        ARM_REACH * np.cos(theta), ARM_REACH * np.sin(theta),
         np.zeros(100), "--", color="gray", alpha=0.3, linewidth=1,
     )
 
@@ -267,20 +278,20 @@ def on_move(event=None):
         return
 
     target = [x, y, z]
-    dist   = np.linalg.norm(target)
+    # 팔 베이스(장착 높이)에서 목표까지의 수평 거리 + 높이 차이로 실제 도달 가능 여부 판단
+    base_to_target = np.linalg.norm([x, y, z - L_BASE])
 
-    if dist > REACH:
-        print(f"[경고] 목표({dist:.3f}m)가 팔 도달 범위({REACH:.3f}m)를 벗어납니다.")
+    if base_to_target > ARM_REACH * 1.05:
+        print(f"[경고] 목표가 팔 도달 범위({ARM_REACH:.3f}m)를 벗어납니다. (거리: {base_to_target:.3f}m)")
         return
-    if z < 0.02:
-        print("[경고] Z는 0.02m 이상이어야 합니다.")
+    if z < 0:
+        print("[경고] Z는 0 이상이어야 합니다 (바닥은 Z=0).")
         return
 
     print(f"\n[IK 계산] 목표: X={x:.3f}, Y={y:.3f}, Z={z:.3f}")
 
     current = state["current_angles"]
-    # 홈 자세에서 시작해야 팔이 바닥 아래로 꺾이지 않음
-    target_angles = compute_ik(target, HOME_ANGLES)
+    target_angles = compute_ik(target, current)
 
     actual  = get_positions(target_angles)[-1]
     error_mm = np.linalg.norm(np.array(target) - actual) * 1000
@@ -333,20 +344,22 @@ btn.on_clicked(on_move)
 # ──────────────────────────────────────────────────────────
 # 6. 초기 화면 그리기
 # ──────────────────────────────────────────────────────────
-init_angles = np.zeros(len(arm.links))
-draw_3d(init_angles, init_angles, [0.20, 0.0, 0.15])
+init_angles = HOME_ANGLES.copy()
+draw_3d(init_angles, init_angles, [0.20, 0.0, 0.03])
 draw_bars(init_angles, init_angles)
-draw_info(init_angles, init_angles, [0.20, 0.0, 0.15], 0.0)
+draw_info(init_angles, init_angles, [0.20, 0.0, 0.03], 0.0)
 
 print("=" * 50)
 print("SO-ARM101 IK 시뮬레이터 시작")
 print("=" * 50)
-print(f"팔 최대 도달 거리: {REACH:.3f} m")
+print(f"팔 베이스 높이 (터틀봇 장착): {L_BASE:.3f} m")
+print(f"팔 길이 (어깨~그리퍼):        {ARM_REACH:.3f} m")
 print("X, Y, Z 값을 입력하고 [이동 실행] 버튼을 클릭하세요.")
 print()
-print("예시 좌표 (범위 내)")
-print(f"  앞쪽:   X=0.25, Y=0.00, Z=0.10")
-print(f"  왼쪽:   X=0.10, Y=0.20, Z=0.15")
-print(f"  위쪽:   X=0.10, Y=0.00, Z=0.30")
+print("예시 좌표")
+print(f"  바닥 앞:  X=0.20, Y=0.00, Z=0.03  ← 쓰레기 집기")
+print(f"  바닥 옆:  X=0.15, Y=0.15, Z=0.03")
+print(f"  중간 높이: X=0.20, Y=0.00, Z=0.20")
+print(f"  위쪽:    X=0.10, Y=0.00, Z=0.40")
 
 plt.show()
