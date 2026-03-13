@@ -17,6 +17,11 @@ from matplotlib.widgets import TextBox, Button
 from mpl_toolkits.mplot3d import Axes3D
 import ikpy.chain
 import ikpy.link
+import matplotlib
+
+# 한글 폰트 설정 (Windows)
+matplotlib.rc("font", family="Malgun Gothic")
+matplotlib.rcParams["axes.unicode_minus"] = False
 
 
 # ──────────────────────────────────────────────────────────
@@ -285,8 +290,9 @@ def on_move(event=None):
     frames = interpolate(current, target_angles, n=50)
 
     # 기존 애니메이션 중지
-    if state["anim"]:
+    if state["anim"] and state["anim"].event_source is not None:
         state["anim"].event_source.stop()
+    state["anim"] = None
 
     def update(i):
         draw_3d(current, target_angles, target, anim_angles=frames[i])
