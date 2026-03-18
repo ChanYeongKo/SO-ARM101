@@ -7,7 +7,7 @@ from pathlib import Path
 from ultralytics import YOLO
 
 
-DATASET_DIR  = Path(__file__).parent.parent / "dataset"
+DATASET_DIR  = Path(__file__).parent.parent / "data"
 MODEL_DIR    = Path(__file__).parent.parent / "models"
 DATA_YAML    = DATASET_DIR / "data.yaml"
 
