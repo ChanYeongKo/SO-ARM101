@@ -1,0 +1,7 @@
+cd ~/SO-ARM101
+  mkdir -p src/garbage_detection/data
+  cd src/garbage_detection/data
+
+  curl -L "https://app.roboflow.com/ds/I3wxLQDClO?key=VHPFocDf0q" > roboflow.zip
+  unzip roboflow.zip
+  rm roboflow.zip
