@@ -14,15 +14,17 @@
 
 | 구분 | 종류 | 위치 | 역할 |
 |------|------|------|------|
-| 탑 카메라 | 일반 RGB 카메라 | 차량 상단 (고정) | 넓은 시야로 쓰레기 탐지 → 차량 이동 명령 |
-| 리스트 카메라 | Intel RealSense D405 | 로봇팔 그리퍼 위 (손목) | 근접 후 정밀 3D 위치 및 물체 크기 측정 |
+| 탑 카메라 | 일반 RGB 카메라 | 차량 상단 (고정) | YOLOv8 쓰레기 탐지 → 터틀봇 이동 명령 |
+| 리스트 카메라 | Intel RealSense D405 | 로봇팔 그리퍼 위 (손목) | YOLOv8 정밀 재탐지 + Depth로 정확한 3D 좌표 추출 |
 
 ```
-[탑 카메라 - RGB]          [리스트 카메라 - D405]
- 차량 상단 고정                그리퍼 손목에 장착
- 넓은 시야 (YOLOv8)           근거리 정밀 (7~50cm)
- 쓰레기 감지 + 이동            3D 좌표 + 물체 크기
+[탑 카메라 - RGB]              [리스트 카메라 - D405]
+ 차량 상단 고정                  그리퍼 손목에 장착
+ 넓은 시야 (YOLOv8 1차)          근거리 정밀 (7~50cm)
+ 쓰레기 감지 → 터틀봇 이동        YOLOv8 2차 + Depth → 정확한 3D 좌표
 ```
+
+> **YOLOv8을 2회 사용하는 이유**: 탑 카메라는 넓은 시야로 쓰레기 존재를 감지하고, D405는 근접 후 주변 돌·낙엽 등과 구분하여 쓰레기만 정확히 특정합니다. 같은 모델을 두 카메라에 각각 실행합니다.
 
 ---
 
@@ -36,16 +38,17 @@ flowchart TD
     end
 
     subgraph PERCEPTION["인식 레이어"]
-        YO["YOLOv8<br\>쓰레기 감지 (탑 카메라)"]
-        COORD["3D 좌표 변환<br\>Camera Intrinsics"]
-        PC["Point Cloud 분석<br\>물체 크기 측정 (리스트 카메라)"]
+        YO1["YOLOv8 1차\n쓰레기 감지 (탑 카메라)\nBBox + 클래스"]
+        YO2["YOLOv8 2차\n정밀 재탐지 (D405 RGB)\n주변 물체와 구분"]
+        COORD["3D 좌표 변환\nCamera Intrinsics"]
+        PC["Point Cloud 분석\n물체 크기 측정"]
         TF["좌표계 변환 TF\n카메라 → 로봇 베이스"]
     end
 
     subgraph DECISION["판단 레이어"]
         GD["Garbage Detector Node\n(ROS2)"]
         NAV["Navigation2\n경로 계획"]
-        IK["역기구학 IK\n목표 위치 → 관절 각도"]
+        IK["역기구학 IKPy\n목표 위치 → 관절 각도 θ1~θ6"]
         GR["그리퍼 개도 계산\n물체 폭 × 1.2"]
     end
 
@@ -59,19 +62,21 @@ flowchart TD
         BIN["쓰레기통\n(지정 위치)"]
     end
 
-    TC -->|"RGB 영상"| YO
-    YO -->|"쓰레기 BBox + 클래스"| GD
+    TC -->|"RGB 영상"| YO1
+    YO1 -->|"쓰레기 BBox + 클래스"| GD
     GD -->|"이동 명령"| NAV
     NAV -->|"cmd_vel"| TB
-    TB -->|"근접 도착"| GD
+    TB -->|"근접 도착 (50cm)"| GD
 
+    WC -->|"RGB 영상"| YO2
     WC -->|"Depth 맵"| COORD
     WC -->|"Point Cloud"| PC
+    YO2 -->|"정밀 BBox (쓰레기만)"| COORD
     COORD -->|"X,Y,Z (카메라 좌표계)"| TF
     PC -->|"물체 폭 (mm)"| GR
     TF -->|"X,Y,Z (로봇 좌표계)"| IK
 
-    GD -->|"집기 목표"| IK
+    GD -->|"집기 신호"| YO2
     IK -->|"관절 각도 θ1~θ6"| LR
     GR -->|"그리퍼 각도"| LR
     LR -->|"서보 제어"| ARM
@@ -87,23 +92,20 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    subgraph TOPCAM["탑 카메라 (RGB, 차량 상단)"]
-        TRGB["RGB 영상\n(넓은 시야)"]
-    end
-
-    subgraph WRISTCAM["리스트 카메라 (D405, 그리퍼 손목)"]
-        WDEPTH["Depth 맵"]
-        WPCL["Point Cloud"]
+    subgraph CAM["D405 (그리퍼 손목, 책상 위 외부 고정 가능)"]
+        DRGB["RGB 영상"]
+        DDEPTH["Depth 맵"]
+        DPCL["Point Cloud"]
     end
 
     subgraph SW["Host PC (Ubuntu 24.04 / ROS2 Jazzy)"]
-        YO["YOLOv8\n쓰레기 감지\nBBox(u,v,w,h)"]
+        YO["YOLOv8\n쓰레기 감지\nBBox(u,v,w,h)\n주변 물체와 구분"]
         COORD["3D 좌표 변환\nCamera Intrinsics\nX,Y,Z (카메라 좌표계)"]
         TF["좌표계 변환 TF\nX,Y,Z (로봇 베이스 좌표계)"]
         SIZE["Point Cloud 분석\n물체 폭 측정 (mm)"]
         GR["그리퍼 개도 계산\n개도 = 물체 폭 × 1.2"]
-        IK["역기구학 IK\n목표 위치 → 관절 각도\nθ1 ~ θ6"]
-        MP["MoveIt2\n모션 플래닝\n충돌 없는 궤적 생성"]
+        IK["역기구학 IKPy\n목표 위치 → 관절 각도\nθ1 ~ θ6"]
+        LR["LeRobot\n관절 각도 → 서보 raw값 변환\n캘리브레이션 자동 적용"]
     end
 
     subgraph HW["로봇팔 하드웨어"]
@@ -115,16 +117,16 @@ flowchart TD
         GRAB["쓰레기 집기 완료"]
     end
 
-    TRGB -->|"영상 스트림"| YO
-    YO -->|"쓰레기 중심 픽셀"| COORD
-    WDEPTH -->|"픽셀별 깊이값"| COORD
-    WPCL -->|"3D 포인트"| SIZE
+    DRGB -->|"RGB 영상"| YO
+    YO -->|"쓰레기 BBox (픽셀 좌표)"| COORD
+    DDEPTH -->|"픽셀별 깊이값"| COORD
+    DPCL -->|"3D 포인트"| SIZE
     COORD -->|"X,Y,Z (카메라 기준)"| TF
     SIZE -->|"물체 폭"| GR
     TF -->|"X,Y,Z (로봇 기준)"| IK
-    IK -->|"관절 각도 θ1~θ6"| MP
-    GR -->|"그리퍼 각도"| MP
-    MP -->|"궤적 명령"| BOARD
+    IK -->|"관절 각도 θ1~θ6"| LR
+    GR -->|"그리퍼 각도"| LR
+    LR -->|"서보 raw값"| BOARD
     BOARD -->|"서보 모터 제어"| ARM
     ARM --> GRAB
 ```
@@ -145,18 +147,20 @@ sequenceDiagram
     participant ARM as SO-ARM101
 
     TC->>AI: RGB 영상 스트림 (넓은 시야)
-    AI->>GD: 쓰레기 BBox + 클래스
+    AI->>GD: 쓰레기 BBox + 클래스 (1차 감지)
     GD->>NAV: 쓰레기 방향으로 이동 명령
     NAV->>CAR: 경로 생성 및 이동
     CAR->>GD: 근접 도착 (50cm 이내)
 
-    WC->>GD: Depth 맵 + Point Cloud (근거리 정밀)
-    GD->>GD: 3D 좌표 변환 (Intrinsics + TF)
+    WC->>AI: D405 RGB 영상 (근거리 정밀)
+    AI->>GD: 쓰레기 BBox 재확인 (2차 감지, 돌·낙엽 등과 구분)
+    WC->>GD: Depth 맵 + Point Cloud
+    GD->>GD: BBox 영역 Depth → 3D 좌표 변환 (Intrinsics + TF)
     GD->>GD: Point Cloud로 물체 폭 측정
     GD->>IK: 정밀 목표 위치 (X,Y,Z) 전달
     IK->>IK: 관절 각도 계산 (θ1~θ6)
     IK->>IK: 그리퍼 개도 계산
-    IK->>ARM: 관절 각도 명령 전송
+    IK->>ARM: LeRobot 통해 서보 명령 전송
     ARM->>GD: 집기 완료
 
     GD->>NAV: 쓰레기통 위치로 이동 명령
@@ -179,9 +183,9 @@ sequenceDiagram
 | 로봇팔 | SO-ARM101 (Follower) | 쓰레기 집기 실행 |
 | 탑 카메라 | RGB USB 카메라 (차량 상단) | 넓은 시야로 쓰레기 탐지 |
 | 리스트 카메라 | Intel RealSense D405 (그리퍼 손목) | 근거리 정밀 3D 측정 |
-| 물체 인식 | YOLOv8 | 쓰레기 감지 및 BBox 추출 |
-| 팔 제어 | IKPy (역기구학) | 위치 독립적 팔 모션 플래닝 |
-| 보조 학습 | LeRobot ACT | 복잡한 형태 파지 보조 |
+| 물체 인식 | YOLOv8 (탑 카메라 1차 + D405 2차) | 쓰레기 감지 및 주변 물체와 구분 |
+| 팔 제어 | IKPy (역기구학) | 위치 독립적 관절 각도 계산 |
+| 서보 제어 | LeRobot (feetech) | 관절 각도 → 서보 raw값 변환 및 모터 제어 |
 | 언어 | Python, C++ | - |
 
 ---
@@ -190,11 +194,12 @@ sequenceDiagram
 
 ### 1학기 - 로봇팔 위주
 - [ ] 개발 환경 구축 (ROS2 Jazzy + IKPy + LeRobot)
-- [ ] SO-ARM101 캘리브레이션 및 기초 제어
-- [ ] 탑 카메라 + YOLOv8 쓰레기 감지
-- [ ] D405 (리스트 카메라) 캘리브레이션 및 TF 설정
+- [ ] SO-ARM101 캘리브레이션 및 텔레오퍼레이션 확인
+- [ ] D405 연결 및 RGB/Depth 스트림 확인
+- [ ] D405 + YOLOv8 쓰레기 감지 (주변 물체와 구분)
+- [ ] 핸드-아이 캘리브레이션 (D405 ↔ 로봇 베이스 좌표 변환)
 - [ ] Point Cloud로 물체 크기 측정 → 그리퍼 개도 계산
-- [ ] 역기구학 IKPy 구현 및 연동
+- [ ] IKPy 역기구학 연동 (3D 좌표 → 관절 각도 → LeRobot)
 - [ ] 통합 테스트 (감지 → IK → 집기 자율 동작)
 
 ### 2학기 - 전체 통합
@@ -477,8 +482,17 @@ python lerobot/scripts/control_robot.py calibrate \
 ```bash
 conda activate lerobot
 
-python lerobot/scripts/control_robot.py teleoperate \
-    --robot-path lerobot/configs/robot/so101.yaml
+lerobot-teleoperate \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_follower \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/ttyACM1 \
+  --teleop.id=my_leader \
+  --display_data=true \
+  --robot.cameras="{wrist:{type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}"
 ```
+
+> 포트 확인: `ls /dev/ttyACM*` 으로 팔로워/리더 포트 번호 확인 후 대입
 
 Leader 팔을 손으로 움직이면 Follower 팔이 따라 움직이면 정상입니다.
