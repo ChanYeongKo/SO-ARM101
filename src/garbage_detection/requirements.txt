@@ -1,6 +1,0 @@
-ultralytics>=8.0.0
-roboflow
-opencv-python
-numpy
-torch
-torchvision
