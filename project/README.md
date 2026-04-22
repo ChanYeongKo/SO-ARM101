@@ -3,6 +3,12 @@
 
 
 
+Uploading 최종 영상.mp4…
+
+
+
+
+
 # Pick and Dump: SO-ARM101 쓰레기통 비우기 시스템
 
 SO-ARM101 5DOF 로봇팔과 Intel RealSense D405 카메라를 사용하여, **쓰레기통을 자동으로 파지 → 비우기 → 제자리에 돌려놓는** 시스템입니다.
