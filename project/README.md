@@ -1,6 +1,6 @@
 # 동작 영상
 ```
-https://youtu.be/k-5ovH2-oAw
+https://youtube.com/shorts/PFrSSYbNE2M
 ```
 
 # SO-ARM101 자율 쓰레기통 비우기 시스템 — 최종 보고서
