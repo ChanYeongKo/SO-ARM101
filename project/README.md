@@ -1,13 +1,7 @@
 # 동작 영상
-
-
-
-
-Uploading 최종 영상.mp4…
-
-
-
-
+```
+https://youtu.be/k-5ovH2-oAw
+```
 
 # Pick and Dump: SO-ARM101 쓰레기통 비우기 시스템
 
