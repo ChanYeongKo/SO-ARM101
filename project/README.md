@@ -1,6 +1,5 @@
 # 동작 영상
 
-https://github.com/user-attachments/assets/2e36111d-26ee-4158-b053-c081b6605463
 
 
 
