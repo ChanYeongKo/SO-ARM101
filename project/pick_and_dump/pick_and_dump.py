@@ -16,6 +16,9 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "grasp"))
 
+import json
+import socket
+import threading
 import time
 import numpy as np
 import cv2
@@ -27,6 +30,11 @@ from lerobot.model.kinematics import RobotKinematics
 from detect_target import get_trash_can_3d_cam, get_trash_can_3d_cam_with_height
 from coord_transform import cam_to_base, JOINT_NAMES
 from ik_solver import IKSolver
+
+# ─── Isaac Sim 미러링 설정 ────────────────────────────────
+ISAAC_SIM_IP   = "192.168.0.47"   # Windows PC IP
+ISAAC_SIM_PORT = 5005
+ISAAC_SIM_HZ   = 30
 
 # ─── 설정 ──────────────────────────────────────────────
 FOLLOWER_PORT = "/dev/ttyACM1"
@@ -69,6 +77,29 @@ DUMP_WAYPOINTS = [
      "wrist_flex": 70.07, "wrist_roll": 3.0},
 ]
 # ────────────────────────────────────────────────────────
+
+
+def start_isaac_streamer(robot) -> None:
+    """Isaac Sim으로 관절각을 UDP 스트리밍하는 백그라운드 스레드를 시작합니다."""
+    _STREAM_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex",
+                      "wrist_flex", "wrist_roll", "gripper"]
+    sock     = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    target   = (ISAAC_SIM_IP, ISAAC_SIM_PORT)
+    interval = 1.0 / ISAAC_SIM_HZ
+
+    def _loop():
+        while True:
+            try:
+                obs    = robot.get_observation()
+                joints = {n: float(obs[f"{n}.pos"]) for n in _STREAM_JOINTS}
+                sock.sendto(json.dumps(joints).encode(), target)
+            except Exception:
+                pass
+            time.sleep(interval)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    print(f"[Isaac Sim] 스트리밍 시작 → {ISAAC_SIM_IP}:{ISAAC_SIM_PORT} @ {ISAAC_SIM_HZ}Hz")
 
 
 def move_joints_smooth(robot, target_joints: dict, steps: int = 30):
@@ -191,6 +222,7 @@ def main():
         )
     )
     follower.connect()
+    start_isaac_streamer(follower)
 
     kin = RobotKinematics(
         urdf_path=URDF_PATH,
